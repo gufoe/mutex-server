@@ -1,22 +1,27 @@
 use std::{
     collections::{HashMap, HashSet},
-    hash::Hash,
-    io::{Read, Write},
+    io::Read,
     net::TcpStream,
-    sync::{atomic::AtomicBool, Arc, RwLock},
+    sync::{Arc, RwLock},
     thread,
     time::Duration,
 };
 
 use serde::{Deserialize, Serialize};
+use structopt::StructOpt;
 
 type ConnectionID = usize;
 
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(tag = "command", content = "params")]
 enum Command {
-    Lock { id: MutexID, timeout_ms: Option<usize> },
-    Release { id: MutexID },
+    Lock {
+        id: MutexID,
+        timeout_ms: Option<usize>,
+    },
+    Release {
+        id: MutexID,
+    },
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -53,8 +58,13 @@ impl Connection {
                     println!("Got command: {:?}", command);
                     match command {
                         Command::Lock { id, timeout_ms } => {
-                            let success = self.lock(&id);
-                            self.send(&Response::LockResponse { id, success });
+                            if timeout_ms.is_some() {
+                                eprintln!("Timeout is not implemented yet");
+                                self.send(&Response::LockResponse { id, success: false });
+                            } else {
+                                let success = self.lock(&id);
+                                self.send(&Response::LockResponse { id, success });
+                            }
                         }
                         Command::Release { id } => {
                             let success = self.release(&id);
@@ -64,7 +74,7 @@ impl Connection {
                 }
                 Err(e) => {
                     self.is_alive = false;
-                    println!("Cannot deserialize: {:?}", e);
+                    eprintln!("Cannot deserialize: {:?}", e);
                 }
             }
         }
@@ -75,7 +85,7 @@ impl Connection {
         match result {
             Ok(_) => true,
             Err(e) => {
-                println!("Cannot send response: {:?}", e);
+                eprintln!("Cannot send response: {:?}", e);
                 self.is_alive = false;
                 false
             }
@@ -98,7 +108,7 @@ impl Connection {
     }
     fn lock(&mut self, mutex_id: &MutexID) -> bool {
         if self.locks.contains(mutex_id) {
-            return true
+            return true;
         }
         loop {
             let ok = self.state.lock(self.id, mutex_id);
@@ -172,8 +182,19 @@ impl Server {
     }
 }
 
+
+
+#[derive(Debug, StructOpt)]
+#[structopt(name = "Mutex Server", about = "Starts a mutex server.")]
+struct Opt {
+    #[structopt(short, long)]
+    bind: String,
+}
+
 fn main() {
-    println!("Hello, world!");
+    let opt = Opt::from_args();
+
+    println!("Starting server {}", &opt.bind);
     let mut server = Server::default();
-    server.serve("127.0.0.1:54321");
+    server.serve(&opt.bind);
 }

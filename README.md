@@ -7,7 +7,14 @@ When clients disconnect, the mutexes are automatically released.
 - It uses one thread per connection
 - There are no tests
 
+
+## Example usage
+```sh
+./mutex-server --bind 127.0.0.1:54321
+```
+
 ## TCP commands
+You need to connect through TCP and send packets with the following contents.
 
 # Lock a mutex
 ```json
