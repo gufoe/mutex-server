@@ -1,6 +1,6 @@
 use std::{
     collections::{HashMap, HashSet},
-    io::Read,
+    io::{Read, Write},
     net::TcpStream,
     sync::{Arc, RwLock},
     thread,
@@ -81,7 +81,11 @@ impl Connection {
         self.release_all();
     }
     fn send<T: ?Sized + Serialize>(&mut self, payload: &T) -> bool {
-        let result = serde_json::to_writer(&mut self.stream, payload);
+        let payload = serde_json::to_string(payload).unwrap() + "\n";
+
+        self.stream.write(payload.as_bytes()).unwrap();
+        let result = self.stream.flush();
+
         match result {
             Ok(_) => true,
             Err(e) => {
@@ -181,8 +185,6 @@ impl Server {
         }
     }
 }
-
-
 
 #[derive(Debug, StructOpt)]
 #[structopt(name = "Mutex Server", about = "Starts a mutex server.")]
