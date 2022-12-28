@@ -209,7 +209,7 @@ impl Server {
     pub fn release(&self, mutex: &MutexID) -> bool {
         let mut locks = self.mutex_to_conn.write().unwrap();
         locks.remove(mutex);
-        // println!("{} active, released [{}]", locks.len(), mutex);
+        println!("{} active, released [{}]", locks.len(), mutex);
         self.bus.lock().unwrap().broadcast(mutex.clone());
         true
     }
