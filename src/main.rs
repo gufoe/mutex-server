@@ -2,12 +2,8 @@ use std::{
     collections::{HashMap, HashSet},
     io::{Read, Write},
     net::TcpStream,
-    sync::{
-        mpsc::{Receiver, Sender},
-        Arc, Mutex, RwLock,
-    },
+    sync::{Arc, Mutex, RwLock},
     thread,
-    time::Duration,
 };
 
 use bus::Bus;
