@@ -34,7 +34,7 @@ class TcpMutexClient
         return $buffer;
     }
 
-    function lock($id)
+    function lock(string $id)
     {
         return new TcpMutex($this, $id);
     }
