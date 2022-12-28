@@ -6,6 +6,7 @@ WORKDIR /app
 COPY Cargo.* ./
 RUN cargo build --release --target x86_64-unknown-linux-musl
 COPY src src
+RUN touch src/main.rs && cargo build --release --target x86_64-unknown-linux-musl
 RUN cargo install --target x86_64-unknown-linux-musl --path .
 RUN strip /usr/local/cargo/bin/mutex-server
 
