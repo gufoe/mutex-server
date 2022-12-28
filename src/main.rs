@@ -2,11 +2,15 @@ use std::{
     collections::{HashMap, HashSet},
     io::{Read, Write},
     net::TcpStream,
-    sync::{Arc, RwLock},
+    sync::{
+        mpsc::{Receiver, Sender},
+        Arc, Mutex, RwLock,
+    },
     thread,
     time::Duration,
 };
 
+use bus::Bus;
 use serde::{Deserialize, Serialize};
 use structopt::StructOpt;
 
@@ -34,28 +38,34 @@ struct Connection {
     pub id: ConnectionID,
     pub stream: TcpStream,
     pub locks: HashSet<MutexID>,
-    state: ServerState,
+    state: Server,
     is_alive: bool,
+    receiver: bus::BusReader<MutexID>,
 }
 
 impl Connection {
-    fn new(state: ServerState, id: usize, stream: TcpStream) -> Self {
+    fn new(state: Server, id: usize, stream: TcpStream, receiver: bus::BusReader<MutexID>) -> Self {
         Self {
             id,
             stream,
             state,
             is_alive: true,
             locks: Default::default(),
+            receiver,
         }
     }
     fn cycle(&mut self) {
         while self.is_alive {
             let mut buffer = [0; 1024];
             let count = self.stream.read(&mut buffer).unwrap();
+            if count == 0 {
+                // println!("Connection closed");
+                break;
+            }
             let command = serde_json::from_slice::<Command>(&buffer[0..count]);
             match command {
                 Ok(command) => {
-                    println!("Got command: {:?}", command);
+                    // println!("Got command: {:?}", command);
                     match command {
                         Command::Lock { id, timeout_ms } => {
                             if timeout_ms.is_some() {
@@ -114,13 +124,21 @@ impl Connection {
         if self.locks.contains(mutex_id) {
             return true;
         }
+
         loop {
+            // Try to acquire the lock
             let ok = self.state.lock(self.id, mutex_id);
             if ok.is_ok() {
                 self.locks.insert(mutex_id.clone());
                 break;
-            } else {
-                thread::sleep(Duration::from_millis(10));
+            }
+
+            // If mutex is already locked by someone else, wait for the release signal
+            loop {
+                let released_mutex = self.receiver.recv().unwrap();
+                if &released_mutex == mutex_id {
+                    break;
+                }
             }
         }
         true
@@ -128,45 +146,33 @@ impl Connection {
 }
 
 type MutexID = String;
-#[derive(Default, Clone)]
-struct ServerState {
-    mutex_to_conn: Arc<RwLock<HashMap<MutexID, ConnectionID>>>,
-}
-impl ServerState {
-    pub fn lock(&self, conn: ConnectionID, mutex: &MutexID) -> Result<(), ()> {
-        let mut locks = self.mutex_to_conn.write().unwrap();
-        if locks.contains_key(mutex) {
-            Err(())
-        } else {
-            locks.insert(mutex.clone(), conn);
-            Ok(())
-        }
-    }
-    pub fn release(&self, mutex: &MutexID) -> bool {
-        let mut locks = self.mutex_to_conn.write().unwrap();
-        if !locks.contains_key(mutex) {
-            false
-        } else {
-            locks.remove(mutex);
-            true
-        }
-    }
-}
 
+#[derive(Clone)]
 struct Server {
-    next_id: ConnectionID,
-    state: ServerState,
+    mutex_to_conn: Arc<RwLock<HashMap<MutexID, ConnectionID>>>,
+    next_id: Arc<Mutex<ConnectionID>>,
+    bus: Arc<Mutex<Bus<MutexID>>>,
 }
 
 impl Default for Server {
     fn default() -> Self {
         Self {
-            next_id: 1,
-            state: ServerState::default(),
+            next_id: Arc::new(Mutex::new(1)),
+            mutex_to_conn: Default::default(),
+            bus: Arc::new(Mutex::new(Bus::new(1000))),
         }
     }
 }
 impl Server {
+    fn generate_id(&self) -> usize {
+        let mut guard = self.next_id.lock().unwrap();
+        if *guard == usize::MAX {
+            *guard = 1;
+        } else {
+            *guard += 1;
+        }
+        *guard
+    }
     fn serve(&mut self, bind: &str) {
         use std::net::TcpListener;
 
@@ -174,15 +180,38 @@ impl Server {
 
         for stream in listener.incoming() {
             let stream = stream.unwrap();
-            println!("Connection established! {}", stream.peer_addr().unwrap());
-            let state = self.state.clone();
-            let id = self.next_id;
-            self.next_id += 1;
-            let mut conn = Connection::new(state, id, stream);
-            thread::spawn(move || {
-                conn.cycle();
-            });
+            stream.set_nodelay(true).unwrap();
+            let state = self.clone();
+
+            let id = self.generate_id();
+
+            // println!(
+            //     "New connection [{}] from {}",
+            //     id,
+            //     stream.peer_addr().unwrap()
+            // );
+            let mut conn = Connection::new(state, id, stream, self.bus.lock().unwrap().add_rx());
+
+            thread::spawn(move || conn.cycle());
         }
+    }
+
+    pub fn lock(&self, conn: ConnectionID, mutex: &MutexID) -> Result<(), ()> {
+        let mut locks = self.mutex_to_conn.write().unwrap();
+        if locks.contains_key(mutex) {
+            Err(())
+        } else {
+            locks.insert(mutex.clone(), conn);
+            println!("{} active, acquired [{}]", locks.len(), mutex);
+            Ok(())
+        }
+    }
+    pub fn release(&self, mutex: &MutexID) -> bool {
+        let mut locks = self.mutex_to_conn.write().unwrap();
+        locks.remove(mutex);
+        // println!("{} active, released [{}]", locks.len(), mutex);
+        self.bus.lock().unwrap().broadcast(mutex.clone());
+        true
     }
 }
 
