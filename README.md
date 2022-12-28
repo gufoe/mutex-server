@@ -1,7 +1,7 @@
 # Mutex Server
 
-This project provides a TCP server that provides a cross-process and cross-node mutex.
-When clients disconnect, the mutexes are automatically released.
+This project provides a TCP server that will act as a cross-server mutex.
+When clients disconnect or timeout, the mutexes are automatically released.
 
 ## Why you should not use it in production
 
@@ -12,7 +12,7 @@ When clients disconnect, the mutexes are automatically released.
 ## Example usage
 
 ```sh
-./mutex-server --bind 127.0.0.1:54321
+./mutex-server --bind 127.0.0.1:9922
 ```
 
 ## TCP commands

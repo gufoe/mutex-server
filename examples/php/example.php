@@ -80,7 +80,7 @@ class TcpMutex
 }
 
 
-$client = new TcpMutexClient('127.0.0.1', 54321);
+$client = new TcpMutexClient('127.0.0.1', 9922);
 
 echo "Acquiring mutex...\n";
 $mutex = $client->lock(10);
