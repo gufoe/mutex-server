@@ -4,9 +4,9 @@ use std::{
     net::TcpStream,
     sync::{Arc, Mutex, RwLock},
     thread,
+    time::{Duration, Instant},
 };
 
-use bus::Bus;
 use serde::{Deserialize, Serialize};
 use structopt::StructOpt;
 
@@ -17,7 +17,10 @@ type ConnectionID = usize;
 enum Command {
     Lock {
         id: MutexID,
-        timeout_ms: Option<usize>,
+        timeout_ms: Option<u64>,
+    },
+    Check {
+        id: MutexID,
     },
     Release {
         id: MutexID,
@@ -29,6 +32,7 @@ enum Command {
 enum Response {
     LockResponse { id: MutexID, success: bool },
     ReleaseResponse { id: MutexID, success: bool },
+    CheckResponse { id: MutexID, is_locked: bool },
 }
 struct Connection {
     pub id: ConnectionID,
@@ -36,24 +40,22 @@ struct Connection {
     pub locks: HashSet<MutexID>,
     state: Server,
     is_alive: bool,
-    receiver: bus::BusReader<MutexID>,
 }
 
 impl Connection {
-    fn new(state: Server, id: usize, stream: TcpStream, receiver: bus::BusReader<MutexID>) -> Self {
+    fn new(state: Server, id: usize, stream: TcpStream) -> Self {
         Self {
             id,
             stream,
             state,
             is_alive: true,
             locks: Default::default(),
-            receiver,
         }
     }
     fn cycle(&mut self) {
         while self.is_alive {
             let mut buffer = [0; 1024];
-            let count = self.stream.read(&mut buffer).unwrap();
+            let count = self.stream.read(&mut buffer).unwrap_or(0);
             if count == 0 {
                 // println!("Connection closed");
                 break;
@@ -64,17 +66,18 @@ impl Connection {
                     // println!("Got command: {:?}", command);
                     match command {
                         Command::Lock { id, timeout_ms } => {
-                            if timeout_ms.is_some() {
-                                eprintln!("Timeout is not implemented yet");
-                                self.send(&Response::LockResponse { id, success: false });
-                            } else {
-                                let success = self.lock(&id);
-                                self.send(&Response::LockResponse { id, success });
-                            }
+                            let success = self.lock(&id, timeout_ms);
+                            self.send(&Response::LockResponse { id, success });
                         }
                         Command::Release { id } => {
                             let success = self.release(&id);
                             self.send(&Response::ReleaseResponse { id, success });
+                        }
+                        Command::Check { id } => {
+                            self.send(&Response::CheckResponse {
+                                is_locked: self.locks.contains(&id),
+                                id,
+                            });
                         }
                     }
                 }
@@ -116,28 +119,35 @@ impl Connection {
             true
         }
     }
-    fn lock(&mut self, mutex_id: &MutexID) -> bool {
+    fn lock(&mut self, mutex_id: &MutexID, timeout_ms: Option<u64>) -> bool {
         if self.locks.contains(mutex_id) {
             return true;
         }
 
+        let t_start = Instant::now();
+        let timeout = if let Some(ms) = timeout_ms {
+            Some(Duration::from_millis(ms))
+        } else {
+            None
+        };
         loop {
             // Try to acquire the lock
             let ok = self.state.lock(self.id, mutex_id);
             if ok.is_ok() {
                 self.locks.insert(mutex_id.clone());
-                break;
+                return true;
             }
 
-            // If mutex is already locked by someone else, wait for the release signal
-            loop {
-                let released_mutex = self.receiver.recv().unwrap();
-                if &released_mutex == mutex_id {
-                    break;
+            // Check if timeout has elapsed
+            if let Some(t) = timeout {
+                if t_start.elapsed() >= t {
+                    return false;
                 }
             }
+
+            // Sleep to prevent busy waiting to hog the cpu
+            thread::sleep(Duration::from_millis(10));
         }
-        true
     }
 }
 
@@ -147,7 +157,6 @@ type MutexID = String;
 struct Server {
     mutex_to_conn: Arc<RwLock<HashMap<MutexID, ConnectionID>>>,
     next_id: Arc<Mutex<ConnectionID>>,
-    bus: Arc<Mutex<Bus<MutexID>>>,
 }
 
 impl Default for Server {
@@ -155,7 +164,6 @@ impl Default for Server {
         Self {
             next_id: Arc::new(Mutex::new(1)),
             mutex_to_conn: Default::default(),
-            bus: Arc::new(Mutex::new(Bus::new(1000))),
         }
     }
 }
@@ -181,12 +189,7 @@ impl Server {
 
             let id = self.generate_id();
 
-            // println!(
-            //     "New connection [{}] from {}",
-            //     id,
-            //     stream.peer_addr().unwrap()
-            // );
-            let mut conn = Connection::new(state, id, stream, self.bus.lock().unwrap().add_rx());
+            let mut conn = Connection::new(state, id, stream);
 
             thread::spawn(move || conn.cycle());
         }
@@ -206,7 +209,6 @@ impl Server {
         let mut locks = self.mutex_to_conn.write().unwrap();
         locks.remove(mutex);
         println!("{} active, released [{}]", locks.len(), mutex);
-        self.bus.lock().unwrap().broadcast(mutex.clone());
         true
     }
 }

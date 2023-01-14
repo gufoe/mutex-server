@@ -79,16 +79,18 @@ class TcpMutex
     }
 }
 
-
 $client = new TcpMutexClient('127.0.0.1', 9922);
-
-echo "Acquiring mutex...\n";
-$mutex = $client->lock(10);
-echo "Mutex acquired\n";
-
-echo "Sleep 5 seconds...\n";
-sleep(5);
-
-echo "Releasing mutex...\n";
-$mutex->release();
-echo "Mutex released\n";
+while (true) {
+    
+    
+    echo "Acquiring mutex...\n";
+    $mutex = $client->lock(10);
+    echo "Mutex acquired\n";
+    
+    echo "Sleep 5 seconds...\n";
+    // sleep(1);
+    
+    echo "Releasing mutex...\n";
+    $mutex->release();
+    echo "Mutex released\n";
+}
