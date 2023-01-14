@@ -34,19 +34,19 @@ class TcpMutexClient
         return $buffer;
     }
 
-    function lock(string $id)
+    function lock(string $id, int $timeout = null)
     {
-        return new TcpMutex($this, $id);
+        return new TcpMutex($this, $id, $timeout);
     }
 }
 
 class TcpMutex
 {
-    function __construct(public TcpMutexClient $client, public string $id)
+    function __construct(public TcpMutexClient $client, public string $id, public ?int $timeout = null)
     {
         $this->client->write(json_encode([
             'command' => 'Lock',
-            'params' => ['id' => $this->id],
+            'params' => ['id' => $this->id, 'timeout_ms' => $this->timeout],
         ]));
         $response = $this->client->readJson();
         if ($response->command != 'LockResponse') {
@@ -81,15 +81,15 @@ class TcpMutex
 
 $client = new TcpMutexClient('127.0.0.1', 9922);
 while (true) {
-    
-    
+
+
     echo "Acquiring mutex...\n";
-    $mutex = $client->lock(10);
+    $mutex = $client->lock(10, 1000);
     echo "Mutex acquired\n";
-    
+
     echo "Sleep 5 seconds...\n";
-    // sleep(1);
-    
+    sleep(5);
+
     echo "Releasing mutex...\n";
     $mutex->release();
     echo "Mutex released\n";
