@@ -38,6 +38,22 @@ class TcpMutexClient
     {
         return new TcpMutex($this, $id, $timeout);
     }
+    function isLocked(string $id): bool
+    {
+        $this->write(json_encode([
+            'command' => 'Check',
+            'params' => ['id' => $id],
+        ]));
+
+        $response = $this->readJson();
+        if ($response->command != 'CheckResponse') {
+            throw new \Error("Invalid server response");
+        }
+        if ($response->params->id != $id) {
+            throw new \Error("Invalid server response");
+        }
+        return $response->params->is_locked;
+    }
 }
 
 class TcpMutex
@@ -83,8 +99,8 @@ $client = new TcpMutexClient('127.0.0.1', 9922);
 while (true) {
 
 
-    echo "Acquiring mutex...\n";
-    $mutex = $client->lock(10, 1000);
+    echo "Acquiring mutex... (current status is " . ($client->isLocked(10) ? 'locked' : 'free') . ")\n";
+    $mutex = $client->lock(10);
     echo "Mutex acquired\n";
 
     echo "Sleep 5 seconds...\n";

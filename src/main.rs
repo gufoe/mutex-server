@@ -75,7 +75,7 @@ impl Connection {
                         }
                         Command::Check { id } => {
                             self.send(&Response::CheckResponse {
-                                is_locked: self.locks.contains(&id),
+                                is_locked: self.state.is_locked(&id),
                                 id,
                             });
                         }
@@ -120,10 +120,6 @@ impl Connection {
         }
     }
     fn lock(&mut self, mutex_id: &MutexID, timeout_ms: Option<u64>) -> bool {
-        if self.locks.contains(mutex_id) {
-            return true;
-        }
-
         let t_start = Instant::now();
         let timeout = if let Some(ms) = timeout_ms {
             Some(Duration::from_millis(ms))
@@ -210,6 +206,10 @@ impl Server {
         locks.remove(mutex);
         println!("{} active, released [{}]", locks.len(), mutex);
         true
+    }
+    pub fn is_locked(&self, mutex: &MutexID) -> bool {
+        let locks = self.mutex_to_conn.read().unwrap();
+        locks.contains_key(mutex)
     }
 }
 
